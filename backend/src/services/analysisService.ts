@@ -8,7 +8,7 @@ import {
   querySegmentTree,
   withSlidingWindow,
   getWindowResult,
-} from '../native/dist/wrapper';
+} from '../nativeBridge';
 import { createDataProvider, DataProviderError } from './dataProvider';
 import { cache } from '../cache/fileCache';
 import {
