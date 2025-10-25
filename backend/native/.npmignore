@@ -1,0 +1,8 @@
+src/
+tsconfig.json
+*.gyp
+.gitignore
+build/
+node_modules/
+*.log
+*.tmp

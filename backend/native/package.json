@@ -1,0 +1,33 @@
+{
+  "name": "dsa-native",
+  "version": "1.0.0",
+  "description": "Native C bindings for Dynamic Stock Analyzer algorithms",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "install": "npm run build:c && npm run build:native",
+    "build": "npm run build:c && npm run build:native && npm run build:ts",
+    "build:c": "cd ../../c_modules && make clean && make",
+    "build:native": "node-gyp rebuild",
+    "build:ts": "tsc",
+    "clean": "node-gyp clean && rm -rf dist build",
+    "rebuild": "npm run clean && npm run build",
+    "test": "node dist/test.js"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "node-gyp": "^10.2.0",
+    "typescript": "^5.7.2"
+  },
+  "gypfile": true,
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": [
+    "linux",
+    "darwin"
+  ]
+}
