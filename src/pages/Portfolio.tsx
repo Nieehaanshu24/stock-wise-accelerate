@@ -1,14 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { api, Portfolio as PortfolioType, ApiError } from '@/lib/api';
+import { Progress } from '@/components/ui/progress';
+import { api, Portfolio as PortfolioType, ApiError, BatchAnalysisResult } from '@/lib/api';
 import { ErrorAlert } from '@/components/UI/ErrorAlert';
 import { TableSkeleton } from '@/components/UI/LoadingSkeleton';
-import { formatCurrency, formatDate, getRelativeTime } from '@/lib/utils/formatters';
-import { Plus, Trash2, TrendingUp, Briefcase } from 'lucide-react';
+import { exportPortfolioToCSV, downloadCSV, parseCSVImport } from '@/lib/export';
+import { formatCurrency, formatDate, getRelativeTime, formatDateForAPI } from '@/lib/utils/formatters';
+import { Plus, Trash2, TrendingUp, Briefcase, Upload, Download, Play, CheckCircle, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Portfolio() {
@@ -17,7 +19,12 @@ export default function Portfolio() {
   const [error, setError] = useState<ApiError | null>(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [addHoldingDialogOpen, setAddHoldingDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [batchAnalysisDialogOpen, setBatchAnalysisDialogOpen] = useState(false);
   const [selectedPortfolio, setSelectedPortfolio] = useState<string | null>(null);
+  const [batchAnalysisResults, setBatchAnalysisResults] = useState<BatchAnalysisResult[] | null>(null);
+  const [batchAnalysisProgress, setBatchAnalysisProgress] = useState(0);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Form states
   const [newPortfolioName, setNewPortfolioName] = useState('');
@@ -25,6 +32,10 @@ export default function Portfolio() {
   const [holdingSymbol, setHoldingSymbol] = useState('');
   const [holdingQuantity, setHoldingQuantity] = useState('');
   const [holdingPrice, setHoldingPrice] = useState('');
+  const [analysisStartDate, setAnalysisStartDate] = useState('');
+  const [analysisEndDate, setAnalysisEndDate] = useState('');
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     loadPortfolios();
@@ -99,6 +110,68 @@ export default function Portfolio() {
     } catch (err) {
       toast.error('Failed to remove holding');
     }
+  };
+
+  const handleExportCSV = (portfolio: PortfolioType) => {
+    try {
+      const csvData = exportPortfolioToCSV(portfolio);
+      downloadCSV(csvData, `${portfolio.name.replace(/\s+/g, '_')}_${Date.now()}.csv`);
+      toast.success('Portfolio exported successfully');
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  const handleImportCSV = async () => {
+    if (!selectedPortfolio || !fileInputRef.current?.files?.[0]) return;
+
+    const file = fileInputRef.current.files[0];
+
+    try {
+      await api.importPortfolioCSV(selectedPortfolio, file);
+      toast.success('Holdings imported successfully');
+      setImportDialogOpen(false);
+      loadPortfolios();
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } catch (err) {
+      toast.error((err as ApiError).message);
+    }
+  };
+
+  const handleBatchAnalysis = async () => {
+    if (!selectedPortfolio || !analysisStartDate || !analysisEndDate) return;
+
+    setIsAnalyzing(true);
+    setBatchAnalysisProgress(0);
+    setBatchAnalysisResults(null);
+
+    try {
+      const result = await api.batchAnalyzePortfolio(
+        selectedPortfolio,
+        analysisStartDate,
+        analysisEndDate
+      );
+
+      setBatchAnalysisResults(result.results);
+      setBatchAnalysisProgress(100);
+      toast.success(`Analysis completed in ${(result.totalTimeMs / 1000).toFixed(2)}s`);
+    } catch (err) {
+      toast.error('Batch analysis failed');
+      setError(err as ApiError);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const setQuickDate = (days: number) => {
+    const end = new Date();
+    const start = new Date();
+    start.setDate(start.getDate() - days);
+    
+    setAnalysisStartDate(formatDateForAPI(start));
+    setAnalysisEndDate(formatDateForAPI(end));
   };
 
   const calculatePortfolioValue = (portfolio: PortfolioType) => {
@@ -221,17 +294,52 @@ export default function Portfolio() {
                       {portfolio.holdings.length} holdings
                     </p>
                   </div>
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      setSelectedPortfolio(portfolio.id);
-                      setAddHoldingDialogOpen(true);
-                    }}
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    Add
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setSelectedPortfolio(portfolio.id);
+                        setImportDialogOpen(true);
+                      }}
+                    >
+                      <Upload className="h-3 w-3 mr-1" />
+                      Import
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleExportCSV(portfolio)}
+                      disabled={portfolio.holdings.length === 0}
+                    >
+                      <Download className="h-3 w-3 mr-1" />
+                      Export
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setSelectedPortfolio(portfolio.id);
+                        setAddHoldingDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      Add
+                    </Button>
+                  </div>
                 </div>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full mt-2"
+                  onClick={() => {
+                    setSelectedPortfolio(portfolio.id);
+                    setBatchAnalysisDialogOpen(true);
+                  }}
+                  disabled={portfolio.holdings.length === 0}
+                >
+                  <Play className="h-3 w-3 mr-1" />
+                  Batch Analyze
+                </Button>
               </CardHeader>
               <CardContent>
                 {portfolio.holdings.length === 0 ? (
@@ -281,6 +389,7 @@ export default function Portfolio() {
         </div>
       )}
 
+      {/* Add Holding Dialog */}
       <Dialog open={addHoldingDialogOpen} onOpenChange={setAddHoldingDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -326,6 +435,128 @@ export default function Portfolio() {
             <Button onClick={handleAddHolding} className="w-full">
               Add Holding
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={setImportDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import Holdings from CSV</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label htmlFor="csvFile">CSV File</Label>
+              <Input
+                id="csvFile"
+                type="file"
+                accept=".csv"
+                ref={fileInputRef}
+                className="mt-1"
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                Format: symbol,quantity,averagePrice (one holding per line)
+              </p>
+            </div>
+            <Button onClick={handleImportCSV} className="w-full">
+              <Upload className="h-4 w-4 mr-2" />
+              Import Holdings
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Batch Analysis Dialog */}
+      <Dialog open={batchAnalysisDialogOpen} onOpenChange={setBatchAnalysisDialogOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Batch Analyze Portfolio</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="analysisStartDate">Start Date</Label>
+                <Input
+                  id="analysisStartDate"
+                  type="date"
+                  value={analysisStartDate}
+                  onChange={(e) => setAnalysisStartDate(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="analysisEndDate">End Date</Label>
+                <Input
+                  id="analysisEndDate"
+                  type="date"
+                  value={analysisEndDate}
+                  onChange={(e) => setAnalysisEndDate(e.target.value)}
+                  max={new Date().toISOString().split('T')[0]}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={() => setQuickDate(30)}>
+                1M
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setQuickDate(90)}>
+                3M
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setQuickDate(180)}>
+                6M
+              </Button>
+            </div>
+
+            <Button
+              onClick={handleBatchAnalysis}
+              disabled={isAnalyzing || !analysisStartDate || !analysisEndDate}
+              className="w-full"
+            >
+              <Play className="h-4 w-4 mr-2" />
+              {isAnalyzing ? 'Analyzing...' : 'Start Batch Analysis'}
+            </Button>
+
+            {isAnalyzing && (
+              <Progress value={batchAnalysisProgress} className="w-full" />
+            )}
+
+            {batchAnalysisResults && (
+              <div className="space-y-2">
+                <h3 className="font-medium">Analysis Results</h3>
+                {batchAnalysisResults.map((result) => (
+                  <div
+                    key={result.symbol}
+                    className="flex items-center justify-between p-3 rounded-lg border"
+                  >
+                    <div className="flex items-center gap-3">
+                      {result.success ? (
+                        <CheckCircle className="h-5 w-5 text-green-500" />
+                      ) : (
+                        <XCircle className="h-5 w-5 text-red-500" />
+                      )}
+                      <div>
+                        <p className="font-medium">{result.symbol}</p>
+                        {result.success && result.data ? (
+                          <p className="text-xs text-muted-foreground">
+                            Avg Span: {result.data.spanAvg.toFixed(2)} | 
+                            Range: {formatCurrency(result.data.rangeStats.min)} - {formatCurrency(result.data.rangeStats.max)}
+                          </p>
+                        ) : (
+                          <p className="text-xs text-destructive">{result.error}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {result.processingTimeMs}ms
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

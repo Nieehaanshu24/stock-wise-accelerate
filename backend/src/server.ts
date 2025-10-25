@@ -17,6 +17,8 @@ import stocksRoutes from './routes/stocks';
 import analyzeRoutes from './routes/analyze';
 import portfolioRoutes from './routes/portfolio';
 import cacheRoutes from './routes/cache';
+import compareRoutes from './routes/compare';
+import { portfolioService } from './services/portfolioService';
 
 const app: Application = express();
 const PORT = process.env.PORT || 3001;
@@ -65,6 +67,7 @@ app.use('/api/stocks', stocksRoutes);
 app.use('/api/analyze', analyzeRoutes);
 app.use('/api/portfolio', portfolioRoutes);
 app.use('/api/cache', cacheRoutes);
+app.use('/api/compare', compareRoutes);
 
 // 404 handler
 app.use((_req, res) => {
@@ -83,6 +86,9 @@ async function startServer() {
   try {
     // Initialize file cache
     await cache.init();
+    
+    // Initialize portfolio service
+    await portfolioService.init();
     
     // Start cache cleanup interval (every hour)
     setInterval(() => {

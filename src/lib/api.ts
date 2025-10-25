@@ -133,6 +133,28 @@ export interface PortfolioHolding {
   addedAt: string;
 }
 
+export interface BatchAnalysisResult {
+  symbol: string;
+  success: boolean;
+  data?: {
+    spanAvg: number;
+    rangeStats: RangeStats;
+  };
+  error?: string;
+  processingTimeMs: number;
+}
+
+export interface ComparisonResult {
+  symbol: string;
+  success: boolean;
+  data?: Array<{
+    date: string;
+    close: number;
+    volume: number;
+  }>;
+  error?: string;
+}
+
 // API methods
 export const api = {
   // Stock data endpoints
@@ -242,6 +264,87 @@ export const api = {
         method: 'DELETE',
       }
     );
+  },
+
+  async importPortfolioCSV(portfolioId: string, file: File): Promise<{ message: string; portfolio: Portfolio }> {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(
+      `${API_BASE_URL}/portfolio/${portfolioId}/import`,
+      {
+        method: 'POST',
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      const errorData: ErrorResponse = await response.json().catch(() => ({
+        error: 'Unknown Error',
+        message: 'Failed to import CSV',
+      }));
+      throw new ApiError(errorData.message, response.status, errorData.code);
+    }
+
+    return response.json();
+  },
+
+  async batchAnalyzePortfolio(
+    portfolioId: string,
+    startDate: string,
+    endDate: string
+  ): Promise<{
+    portfolioId: string;
+    results: BatchAnalysisResult[];
+    totalTimeMs: number;
+  }> {
+    return fetchWithErrorHandling(`/portfolio/${portfolioId}/analyze`, {
+      method: 'POST',
+      body: JSON.stringify({ startDate, endDate }),
+    });
+  },
+
+  // Comparison endpoints
+  async compareHistorical(
+    symbols: string[],
+    startDate: string,
+    endDate: string
+  ): Promise<{
+    symbols: string[];
+    startDate: string;
+    endDate: string;
+    results: ComparisonResult[];
+  }> {
+    return fetchWithErrorHandling('/compare/historical', {
+      method: 'POST',
+      body: JSON.stringify({ symbols, startDate, endDate }),
+    });
+  },
+
+  async compareAnalyze(
+    symbols: string[],
+    startDate: string,
+    endDate: string
+  ): Promise<{
+    symbols: string[];
+    startDate: string;
+    endDate: string;
+    results: Array<{
+      symbol: string;
+      success: boolean;
+      metrics?: {
+        avgSpan: number;
+        maxSpan: number;
+        totalDays: number;
+      };
+      error?: string;
+      processingTimeMs: number;
+    }>;
+  }> {
+    return fetchWithErrorHandling('/compare/analyze', {
+      method: 'POST',
+      body: JSON.stringify({ symbols, startDate, endDate }),
+    });
   },
 
   // Cache management

@@ -1,27 +1,29 @@
 /**
- * Portfolio management routes
- * Simple in-memory storage (replace with database in production)
+ * Portfolio management routes with file persistence
  */
 
 import { Router, Request, Response } from 'express';
 import { body, param } from 'express-validator';
-import { handleValidationErrors } from '../middleware/validation';
-import { Portfolio, PortfolioHolding } from '../types';
+import { handleValidationErrors, dateValidation, dateRangeValidation } from '../middleware/validation';
+import { portfolioService } from '../services/portfolioService';
 import { logger } from '../utils/logger';
+import multer from 'multer';
 
 const router = Router();
-
-// In-memory storage (replace with database)
-const portfolios = new Map<string, Portfolio>();
-let nextId = 1;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 /**
  * GET /api/portfolio
  * List all portfolios
  */
-router.get('/', (_req: Request, res: Response) => {
-  const portfolioList = Array.from(portfolios.values());
-  res.json({ portfolios: portfolioList });
+router.get('/', async (_req: Request, res: Response) => {
+  try {
+    const portfolioList = await portfolioService.listPortfolios();
+    res.json({ portfolios: portfolioList });
+  } catch (error) {
+    logger.error('Error listing portfolios:', error);
+    throw error;
+  }
 });
 
 /**
@@ -32,20 +34,25 @@ router.get(
   '/:id',
   param('id').isString(),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { id } = req.params;
-    const portfolio = portfolios.get(id);
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const portfolio = await portfolioService.getPortfolio(id);
 
-    if (!portfolio) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Portfolio with ID ${id} not found`,
-        timestamp: new Date().toISOString(),
-      });
-      return;
+      if (!portfolio) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.json(portfolio);
+    } catch (error) {
+      logger.error('Error getting portfolio:', error);
+      throw error;
     }
-
-    res.json(portfolio);
   }
 );
 
@@ -58,22 +65,15 @@ router.post(
   body('name').isString().isLength({ min: 1, max: 100 }),
   body('description').optional().isString().isLength({ max: 500 }),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { name, description } = req.body;
-
-    const portfolio: Portfolio = {
-      id: (nextId++).toString(),
-      name,
-      description,
-      holdings: [],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    portfolios.set(portfolio.id, portfolio);
-    logger.info(`Portfolio created: ${portfolio.id}`);
-
-    res.status(201).json(portfolio);
+  async (req: Request, res: Response) => {
+    try {
+      const { name, description } = req.body;
+      const portfolio = await portfolioService.createPortfolio({ name, description });
+      res.status(201).json(portfolio);
+    } catch (error) {
+      logger.error('Error creating portfolio:', error);
+      throw error;
+    }
   }
 );
 
@@ -87,28 +87,26 @@ router.put(
   body('name').optional().isString().isLength({ min: 1, max: 100 }),
   body('description').optional().isString().isLength({ max: 500 }),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { id } = req.params;
-    const { name, description } = req.body;
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { name, description } = req.body;
 
-    const portfolio = portfolios.get(id);
-    if (!portfolio) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Portfolio with ID ${id} not found`,
-        timestamp: new Date().toISOString(),
-      });
-      return;
+      const portfolio = await portfolioService.updatePortfolio(id, { name, description });
+      if (!portfolio) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.json(portfolio);
+    } catch (error) {
+      logger.error('Error updating portfolio:', error);
+      throw error;
     }
-
-    if (name !== undefined) portfolio.name = name;
-    if (description !== undefined) portfolio.description = description;
-    portfolio.updatedAt = new Date().toISOString();
-
-    portfolios.set(id, portfolio);
-    logger.info(`Portfolio updated: ${id}`);
-
-    res.json(portfolio);
   }
 );
 
@@ -120,22 +118,25 @@ router.delete(
   '/:id',
   param('id').isString(),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { id } = req.params;
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const deleted = await portfolioService.deletePortfolio(id);
 
-    if (!portfolios.has(id)) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Portfolio with ID ${id} not found`,
-        timestamp: new Date().toISOString(),
-      });
-      return;
+      if (!deleted) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.status(204).send();
+    } catch (error) {
+      logger.error('Error deleting portfolio:', error);
+      throw error;
     }
-
-    portfolios.delete(id);
-    logger.info(`Portfolio deleted: ${id}`);
-
-    res.status(204).send();
   }
 );
 
@@ -150,34 +151,31 @@ router.post(
   body('quantity').isFloat({ min: 0.000001 }),
   body('averagePrice').isFloat({ min: 0 }),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { id } = req.params;
-    const { symbol, quantity, averagePrice } = req.body;
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { symbol, quantity, averagePrice } = req.body;
 
-    const portfolio = portfolios.get(id);
-    if (!portfolio) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Portfolio with ID ${id} not found`,
-        timestamp: new Date().toISOString(),
+      const portfolio = await portfolioService.addHolding(id, {
+        symbol: symbol.toUpperCase(),
+        quantity: parseFloat(quantity),
+        averagePrice: parseFloat(averagePrice),
       });
-      return;
+
+      if (!portfolio) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.status(201).json(portfolio);
+    } catch (error) {
+      logger.error('Error adding holding:', error);
+      throw error;
     }
-
-    const holding: PortfolioHolding = {
-      symbol: symbol.toUpperCase(),
-      quantity: parseFloat(quantity),
-      averagePrice: parseFloat(averagePrice),
-      addedAt: new Date().toISOString(),
-    };
-
-    portfolio.holdings.push(holding);
-    portfolio.updatedAt = new Date().toISOString();
-
-    portfolios.set(id, portfolio);
-    logger.info(`Holding added to portfolio ${id}: ${symbol}`);
-
-    res.status(201).json(portfolio);
   }
 );
 
@@ -190,38 +188,105 @@ router.delete(
   param('id').isString(),
   param('symbol').matches(/^[A-Z0-9.\-]+$/i),
   handleValidationErrors,
-  (req: Request, res: Response) => {
-    const { id, symbol } = req.params;
+  async (req: Request, res: Response) => {
+    try {
+      const { id, symbol } = req.params;
+      const portfolio = await portfolioService.removeHolding(id, symbol);
 
-    const portfolio = portfolios.get(id);
-    if (!portfolio) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Portfolio with ID ${id} not found`,
+      if (!portfolio) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found or holding not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.json(portfolio);
+    } catch (error) {
+      logger.error('Error removing holding:', error);
+      throw error;
+    }
+  }
+);
+
+/**
+ * POST /api/portfolio/:id/import
+ * Import holdings from CSV
+ */
+router.post(
+  '/:id/import',
+  param('id').isString(),
+  upload.single('file'),
+  handleValidationErrors,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      if (!req.file) {
+        res.status(400).json({
+          error: 'Bad Request',
+          message: 'CSV file is required',
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      const csvData = req.file.buffer.toString('utf-8');
+      const portfolio = await portfolioService.importFromCSV(id, csvData);
+
+      if (!portfolio) {
+        res.status(404).json({
+          error: 'Not Found',
+          message: `Portfolio with ID ${id} not found`,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      res.json({
+        message: 'Holdings imported successfully',
+        portfolio,
+      });
+    } catch (error) {
+      logger.error('Error importing CSV:', error);
+      res.status(400).json({
+        error: 'Import Error',
+        message: (error as Error).message,
         timestamp: new Date().toISOString(),
       });
-      return;
     }
+  }
+);
 
-    const initialLength = portfolio.holdings.length;
-    portfolio.holdings = portfolio.holdings.filter(
-      h => h.symbol.toUpperCase() !== symbol.toUpperCase()
-    );
+/**
+ * POST /api/portfolio/:id/analyze
+ * Batch analyze all holdings in portfolio
+ */
+router.post(
+  '/:id/analyze',
+  param('id').isString(),
+  ...dateValidation('startDate', 'body'),
+  ...dateValidation('endDate', 'body'),
+  dateRangeValidation('body'),
+  handleValidationErrors,
+  async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { startDate, endDate } = req.body;
 
-    if (portfolio.holdings.length === initialLength) {
-      res.status(404).json({
-        error: 'Not Found',
-        message: `Holding ${symbol} not found in portfolio`,
-        timestamp: new Date().toISOString(),
+      logger.info(`Starting batch analysis for portfolio ${id}`);
+
+      const result = await portfolioService.batchAnalyze(id, startDate, endDate);
+
+      res.json({
+        portfolioId: id,
+        ...result,
       });
-      return;
+    } catch (error) {
+      logger.error('Error in batch analysis:', error);
+      throw error;
     }
-
-    portfolio.updatedAt = new Date().toISOString();
-    portfolios.set(id, portfolio);
-    logger.info(`Holding removed from portfolio ${id}: ${symbol}`);
-
-    res.json(portfolio);
   }
 );
 
