@@ -41,6 +41,28 @@
               "-Wl,-rpath,'$$ORIGIN/../../c_modules/lib'"
             ]
           }
+        ],
+        [
+          "OS=='win'",
+          {
+            "msvs_settings": {
+              "VCCLCompilerTool": {
+                "ExceptionHandling": 1,
+                "AdditionalOptions": ["/EHsc"]
+              },
+              "VCLinkerTool": {
+                "AdditionalLibraryDirectories": [
+                  "../../c_modules/lib"
+                ],
+                "AdditionalDependencies": ["dsa.lib"]
+              }
+            },
+            "conditions": [
+              ["target_arch=='x64'", {
+                "msvs_configuration_platform": "x64"
+              }]
+            ]
+          }
         ]
       ]
     }

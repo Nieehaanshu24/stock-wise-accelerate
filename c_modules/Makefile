@@ -5,12 +5,27 @@ CFLAGS = -Wall -Wextra -O3 -fPIC -std=c11 -Iinclude
 LDFLAGS = -shared -lm
 
 # Detect OS
-UNAME_S := $(shell uname -s)
-ifeq ($(UNAME_S),Darwin)
-    SHARED_EXT = dylib
-    LDFLAGS += -dynamiclib -install_name @rpath/libdsa.$(SHARED_EXT)
+ifeq ($(OS),Windows_NT)
+    DETECTED_OS := Windows
+    SHARED_EXT = dll
+    CC = gcc
+    LDFLAGS = -shared -lm -Wl,--out-implib,$(LIB_DIR)/libdsa.lib
+    RM = del /Q
+    MKDIR = if not exist $(subst /,\,$(1)) mkdir $(subst /,\,$(1))
+    RMDIR = if exist $(subst /,\,$(1)) rmdir /S /Q $(subst /,\,$(1))
 else
-    SHARED_EXT = so
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Darwin)
+        DETECTED_OS := macOS
+        SHARED_EXT = dylib
+        LDFLAGS += -dynamiclib -install_name @rpath/libdsa.$(SHARED_EXT)
+    else
+        DETECTED_OS := Linux
+        SHARED_EXT = so
+    endif
+    RM = rm -f
+    RMDIR = rm -rf
+    MKDIR = mkdir -p
 endif
 
 # Directories
@@ -35,14 +50,15 @@ TEST_HARNESS = $(TEST_DIR)/harness
 all: directories $(SHARED_LIB)
 
 directories:
-	@mkdir -p $(OBJ_DIR) $(LIB_DIR)
+	@$(call MKDIR,$(OBJ_DIR))
+	@$(call MKDIR,$(LIB_DIR))
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c $(HEADERS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(SHARED_LIB): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
-	@echo "Built shared library: $(SHARED_LIB)"
+	@echo "Built shared library: $(SHARED_LIB) for $(DETECTED_OS)"
 
 # Build test harness
 test: directories $(SHARED_LIB)
@@ -58,7 +74,13 @@ install: $(SHARED_LIB)
 	@echo "Installation complete. Run 'sudo ldconfig' on Linux."
 
 clean:
-	rm -rf $(OBJ_DIR) $(LIB_DIR) $(TEST_HARNESS)
+	@$(call RMDIR,$(OBJ_DIR))
+	@$(call RMDIR,$(LIB_DIR))
+ifeq ($(OS),Windows_NT)
+	@if exist $(subst /,\,$(TEST_HARNESS)).exe $(RM) $(subst /,\,$(TEST_HARNESS)).exe
+else
+	@$(RM) $(TEST_HARNESS)
+endif
 	@echo "Cleaned build artifacts"
 
 # Help target
